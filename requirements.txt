@@ -1,8 +1,7 @@
-streamlit==1.33.0
-langgraph==0.2.34
-langchain-core==0.2.38
-langchain-community==0.2.16
-langchain-text-splitters==0.2.2
-langchain-openai==0.1.22
-faiss-cpu==1.7.4
+streamlit
+langchain==0.1.20
+langchain-community==0.0.38
+sentence-transformers
+faiss-cpu
+transformers
 pypdf
