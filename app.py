@@ -39,7 +39,7 @@ if uploaded_file is not None:
     model_name = "google/flan-t5-small"
     tokenizer = AutoTokenizer.from_pretrained(model_name)
     model = AutoModelForSeq2SeqLM.from_pretrained(model_name)
-    summarizer = pipeline("text2text-generation", model=model, tokenizer=tokenizer)
+    summarizer = pipeline("summarization", model=model, tokenizer=tokenizer)
     llm = HuggingFacePipeline(pipeline=summarizer)
 
     prompt = ChatPromptTemplate.from_template("""
