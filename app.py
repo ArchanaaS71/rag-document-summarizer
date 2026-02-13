@@ -3,35 +3,33 @@ import tempfile
 import os
 from typing import TypedDict
 
-# LangChain modules
 from langchain_community.document_loaders import PyPDFLoader, TextLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import FAISS
-from langchain_huggingface import HuggingFaceEmbeddings
-from langchain_community.llms import HuggingFacePipeline
+from langchain_openai import OpenAIEmbeddings, ChatOpenAI
 
-# LangGraph
 from langgraph.graph import StateGraph, END
 
-from transformers import pipeline
-
-# ---------------------------
+# --------------------
 # Streamlit UI
-# ---------------------------
+# --------------------
 
-st.set_page_config(page_title="LangGraph RAG Summariser", layout="wide")
-st.title("📄 LangGraph RAG Document Summariser")
+st.set_page_config(page_title="LangGraph RAG", layout="wide")
+st.title("📄 LangGraph RAG Summariser")
+
+openai_key = st.text_input("Enter OpenAI API Key", type="password")
 
 uploaded_file = st.file_uploader("Upload PDF or TXT", type=["pdf", "txt"])
 
-if uploaded_file:
+if uploaded_file and openai_key:
 
-    # Save file temporarily
+    os.environ["OPENAI_API_KEY"] = openai_key
+
     with tempfile.NamedTemporaryFile(delete=False) as tmp:
         tmp.write(uploaded_file.read())
         file_path = tmp.name
 
-    # Load document
+    # Load file
     if uploaded_file.type == "application/pdf":
         loader = PyPDFLoader(file_path)
     else:
@@ -39,67 +37,43 @@ if uploaded_file:
 
     documents = loader.load()
 
-    # Split into chunks
+    # Split
     splitter = RecursiveCharacterTextSplitter(
-        chunk_size=800,
-        chunk_overlap=100
+        chunk_size=1000,
+        chunk_overlap=200
     )
     chunks = splitter.split_documents(documents)
 
-    st.success(f"Document split into {len(chunks)} chunks.")
-
-    # Create embeddings
-    embeddings = HuggingFaceEmbeddings(
-        model_name="sentence-transformers/all-MiniLM-L6-v2"
-    )
+    # Embeddings (API-based, lightweight)
+    embeddings = OpenAIEmbeddings()
 
     vectorstore = FAISS.from_documents(chunks, embeddings)
     retriever = vectorstore.as_retriever()
 
-    # Load lightweight LLM
-    pipe = pipeline(
-        "text2text-generation",
-        model="google/flan-t5-small",
-        max_length=512,
-        temperature=0.3
-    )
+    llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
 
-    llm = HuggingFacePipeline(pipeline=pipe)
-
-    # ---------------------------
-    # LangGraph State Definition
-    # ---------------------------
+    # --------------------
+    # LangGraph State
+    # --------------------
 
     class GraphState(TypedDict):
         question: str
         context: str
         answer: str
 
-    # ---------------------------
-    # Nodes
-    # ---------------------------
-
     def retrieve(state: GraphState):
         docs = retriever.get_relevant_documents(state["question"])
-        combined = "\n\n".join([doc.page_content for doc in docs])
-        return {"context": combined}
+        context = "\n\n".join([doc.page_content for doc in docs])
+        return {"context": context}
 
     def generate(state: GraphState):
         prompt = f"""
-        You are an expert summariser.
+        Summarise the following document context clearly and concisely:
 
-        Context:
         {state['context']}
-
-        Provide a concise summary in bullet points.
         """
-
         response = llm.invoke(prompt)
-        return {"answer": response}
-
-    # ---------------------------
-    # Build LangGraph
-    # ---------------------------
+        return {"answer": response.content}
 
     graph = StateGraph(GraphState)
 
@@ -112,16 +86,10 @@ if uploaded_file:
 
     app_graph = graph.compile()
 
-    # ---------------------------
-    # Run Graph
-    # ---------------------------
-
     if st.button("Generate Summary"):
-        with st.spinner("Running LangGraph workflow..."):
-
-            result = app_graph.invoke({
-                "question": "Summarise the document."
-            })
+        result = app_graph.invoke({
+            "question": "Summarise the document."
+        })
 
         st.subheader("📌 Summary")
         st.write(result["answer"])
