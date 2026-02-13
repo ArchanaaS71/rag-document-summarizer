@@ -1,10 +1,10 @@
 import streamlit as st
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain_community.document_loaders import PyPDFLoader, TextLoader
-from langchain_community.vectorstores import FAISS
-from langchain_huggingface import HuggingFaceEmbeddings
+from langchain.document_loaders import PyPDFLoader, TextLoader
+from langchain.text_splitters.recursive import RecursiveCharacterTextSplitter
+from langchain.vectorstores.faiss import FAISS
+from langchain.embeddings.huggingface import HuggingFaceEmbeddings
 from langchain.chains import RetrievalQA
-from langchain.llms import HuggingFacePipeline
+from langchain.llms.huggingface import HuggingFaceLLM
 
 from transformers import pipeline
 import tempfile
@@ -16,11 +16,10 @@ st.title("📄 RAG Document Summariser")
 uploaded_file = st.file_uploader("Upload a PDF or TXT file", type=["pdf", "txt"])
 
 if uploaded_file:
-
-    # Save uploaded file temporarily
-    with tempfile.NamedTemporaryFile(delete=False) as tmp_file:
-        tmp_file.write(uploaded_file.read())
-        file_path = tmp_file.name
+    # Save temp file
+    with tempfile.NamedTemporaryFile(delete=False) as tmp:
+        tmp.write(uploaded_file.read())
+        file_path = tmp.name
 
     # Load document
     if uploaded_file.type == "application/pdf":
@@ -28,49 +27,36 @@ if uploaded_file:
     else:
         loader = TextLoader(file_path)
 
-    documents = loader.load()
+    docs = loader.load()
 
-    # Split into chunks
-    text_splitter = RecursiveCharacterTextSplitter(
-        chunk_size=800,
-        chunk_overlap=100
-    )
-    texts = text_splitter.split_documents(documents)
+    # Split document
+    splitter = RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=100)
+    chunks = splitter.split_documents(docs)
+    st.info(f"Split into {len(chunks)} chunks.")
 
-    st.success(f"Document split into {len(texts)} chunks.")
-
-    # Create embeddings
-    embeddings = HuggingFaceEmbeddings(
-        model_name="sentence-transformers/all-MiniLM-L6-v2"
-    )
+    # Embeddings
+    embedder = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
 
     # Store in FAISS
-    vectorstore = FAISS.from_documents(texts, embeddings)
+    vectordb = FAISS.from_documents(chunks, embedder)
 
-    # Load simple LLM (lightweight)
+    # Load lightweight model
     pipe = pipeline(
         "text2text-generation",
         model="google/flan-t5-small",
         max_length=512,
         temperature=0.3
     )
+    llm = HuggingFaceLLM(pipeline=pipe)
 
-    llm = HuggingFacePipeline(pipeline=pipe)
-
-    # Create RetrievalQA chain
-    qa_chain = RetrievalQA.from_chain_type(
-        llm=llm,
-        retriever=vectorstore.as_retriever(),
-        chain_type="stuff"
-    )
+    # Create RAG chain
+    rag = RetrievalQA.from_llm(llm=llm, retriever=vectordb.as_retriever())
 
     if st.button("Generate Summary"):
-        with st.spinner("Generating summary..."):
-            summary = qa_chain.run(
-                "Provide a concise summary of the document."
-            )
-        st.subheader("📌 Summary")
-        st.write(summary)
+        with st.spinner("Summarising..."):
+            result = rag.run("Summarise the document concisely.")
+            st.markdown("### 📌 Summary")
+            st.write(result)
 
-    # Cleanup
+    # remove tmp file
     os.remove(file_path)
