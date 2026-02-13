@@ -20,18 +20,13 @@ st.write("Upload a PDF and get summary + answers")
 
 @st.cache_resource
 def load_model():
+    from transformers import pipeline
     return pipeline(
-        "summarization",
-        model="sshleifer/distilbart-cnn-12-6"   # or your model
+        task="summarization",
+        model="sshleifer/distilbart-cnn-12-6",
+        framework="pt"
     )
 
-summarizer = load_model()
-
-
-uploaded_file = st.file_uploader(
-    "Drag & Drop PDF here",
-    type="pdf"
-)
 
 if uploaded_file:
 
