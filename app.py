@@ -1,80 +1,121 @@
 import streamlit as st
-import tempfile
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain.document_loaders import TextLoader, UnstructuredMarkdownLoader
+from langchain.document_loaders import PyPDFLoader
+from langchain.embeddings import HuggingFaceEmbeddings
+from langchain.vectorstores import FAISS
+from langchain.chains import RetrievalQA
+from langchain.llms import HuggingFacePipeline
+from transformers import T5Tokenizer, T5ForConditionalGeneration, pipeline
+import base64
 import os
-from langchain_community.document_loaders import PyPDFLoader
-from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_community.vectorstores import FAISS
-from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.output_parsers import StrOutputParser
-from langchain_core.runnables import RunnablePassthrough
-from langchain_community.embeddings import HuggingFaceEmbeddings
-from langchain_community.llms import HuggingFacePipeline
-from transformers import AutoTokenizer, AutoModelForSeq2SeqLM, pipeline
 
-st.set_page_config(page_title="RAG Document Summarizer", layout="wide")
-st.title("RAG-Based Document Summarizer")
-st.write("Upload a PDF to generate a summary using open-source models.")
+# --- Model & Embedding Setup ---
+EMBED_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
+TEXT_MODEL = "LaMini-Flan-T5"
 
-uploaded_file = st.file_uploader("Upload your PDF", type=["pdf"])
+tokenizer = T5Tokenizer.from_pretrained(TEXT_MODEL)
+text_model = T5ForConditionalGeneration.from_pretrained(TEXT_MODEL, device_map="auto", torch_dtype="auto")
+summarizer = pipeline("text2text-generation", model=text_model, tokenizer=tokenizer, max_length=500, min_length=50)
 
-if uploaded_file is not None:
-    with tempfile.NamedTemporaryFile(delete=False) as tmp_file:
-        tmp_file.write(uploaded_file.read())
-        tmp_path = tmp_file.name
+embeddings = HuggingFaceEmbeddings(model_name=EMBED_MODEL)
 
-    loader = PyPDFLoader(tmp_path)
-    documents = loader.load()
+# --- Preprocessing & Indexing ---
+def build_or_load_index(file_path: str, index_path="faiss_index"):
+    ext = os.path.splitext(file_path)[-1].lower()
 
-    text_splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=100)
-    docs = text_splitter.split_documents(documents)
+    # Select appropriate loader
+    if ext == ".pdf":
+        loader = PyPDFLoader(file_path)
+    elif ext == ".txt":
+        loader = TextLoader(file_path, encoding="utf-8")
+    elif ext == ".md":
+        loader = UnstructuredMarkdownLoader(file_path)
+    else:
+        raise ValueError("Unsupported file type. Please upload PDF, TXT, or Markdown files.")
 
-    @st.cache_resource
-    def get_vectorstore(docs):
-        embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
-        return FAISS.from_documents(docs, embeddings)
+    # Load and split
+    pages = loader.load_and_split()
+    splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=100)
+    docs = splitter.split_documents(pages)
 
-    vectorstore = get_vectorstore(docs)
-    retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
+    # Use separate index paths for each file type to avoid conflicts
+    if os.path.exists(index_path):
+        return FAISS.load_local(index_path, embeddings, allow_dangerous_deserialization=True)
 
-    model_name = "google/flan-t5-small"
-    tokenizer = AutoTokenizer.from_pretrained(model_name)
-    model = AutoModelForSeq2SeqLM.from_pretrained(model_name)
-    summarizer_pipeline = pipeline(
-        task="summarization",
-        model=model,
-        tokenizer=tokenizer,
-        device=-1
-    )
-    llm = HuggingFacePipeline(pipeline=summarizer_pipeline)
+    vector_index = FAISS.from_documents(docs, embeddings)
+    vector_index.save_local(index_path)
+    return vector_index
 
-    prompt = ChatPromptTemplate.from_template("""
-You are an expert document summarizer.
 
-Use ONLY the context below to generate a concise summary.
+# --- RAG Summarization ---
+def rag_summarize(pdf_path: str, num_chunks=5):
+    index = build_or_load_index(pdf_path)
+    retriever = index.as_retriever(search_kwargs={"k": num_chunks})
 
-Context:
-{context}
+    # Wrap the summarizer into LangChain's LLM format
+    hf_pipe = pipeline("text2text-generation", model=text_model, tokenizer=tokenizer, max_length=512)
+    llm = HuggingFacePipeline(pipeline=hf_pipe)
 
-Question:
-{question}
-""")
-
-    def format_docs(docs):
-        return "\n\n".join(doc.page_content for doc in docs)
-
-    rag_chain = (
-        {"context": retriever | format_docs, "question": RunnablePassthrough()}
-        | prompt
-        | llm
-        | StrOutputParser()
+    qa_chain = RetrievalQA.from_chain_type(
+        llm=llm,
+        chain_type="stuff",
+        retriever=retriever,
+        return_source_documents=True
     )
 
-    if st.button("Generate Summary"):
-        with st.spinner("Generating summary..."):
-            result = rag_chain.invoke(
-                "Provide a structured summary including main topic, key arguments, findings, and conclusions."
-            )
-            st.subheader("Summary")
-            st.write(result)
+    query = "Summarize the main points of this document."
+    output = qa_chain({"query": query})
 
-    os.remove(tmp_path)
+    summary = output["result"]
+    sources = output["source_documents"]
+    return summary, sources
+
+# --- Streamlit UI ---
+@st.cache_data
+def load_pdf_as_base64(file_path):
+    with open(file_path, "rb") as f:
+        return base64.b64encode(f.read()).decode()
+
+def display_pdf(b64):
+    st.markdown(f'<iframe src="data:application/pdf;base64,{b64}" width="100%" height="600"></iframe>', unsafe_allow_html=True)
+
+st.set_page_config(layout="wide", page_title="Document Summarizer")
+
+def main():
+    st.title("Document Summarization using Retrieval-Augmented Generation (RAG)")
+    uploaded = st.file_uploader("Upload PDF, TXT, or Markdown", type=["pdf", "txt", "md"])
+
+    if uploaded:
+        ext = os.path.splitext(uploaded.name)[-1].lower()
+        temp_path = uploaded.name
+        with open(temp_path, "wb") as f:
+            f.write(uploaded.read())
+
+        if st.button("Summarize"):
+            col1, col2 = st.columns(2)
+
+            # Show Document
+            if ext == ".pdf":
+                b64 = load_pdf_as_base64(temp_path)
+                with col1:
+                    st.subheader("Document")
+                    display_pdf(b64)
+            else:
+                with col1:
+                    st.subheader("Document Content")
+                    with open(temp_path, "r", encoding="utf-8") as f:
+                        st.text(f.read()[:2000])
+
+            # RAG Summary
+            with col2:
+                st.subheader("Summary & Source Context")
+                summary, src_docs = rag_summarize(temp_path, num_chunks=5)
+                st.success(summary)
+
+                st.markdown("##### Source Chunks Used:")
+                for i, doc in enumerate(src_docs):
+                    st.write(f"**Chunk {i+1}:** {doc.page_content[:200].strip()}…")
+
+if __name__ == "__main__":
+    main()
