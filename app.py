@@ -8,8 +8,6 @@ from langchain_openai import OpenAIEmbeddings, ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.runnables import RunnablePassthrough
-import time
-from openai.error import RateLimitError
 
 st.set_page_config(page_title="RAG Document Summarizer", layout="wide")
 st.title("RAG-Based Document Summarizer")
@@ -43,8 +41,8 @@ if uploaded_file is not None:
 
     try:
         vectorstore = get_vectorstore(docs)
-    except RateLimitError:
-        st.error("OpenAI API rate limit exceeded. Please try again in a few seconds.")
+    except Exception as e:
+        st.error(f"Error creating embeddings: {e}")
         st.stop()
 
     retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
