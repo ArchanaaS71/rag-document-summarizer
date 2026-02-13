@@ -1,97 +1,112 @@
 import streamlit as st
 import tempfile
-import os
-from typing import TypedDict
 
-from langchain_community.document_loaders import PyPDFLoader, TextLoader
-from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_community.document_loaders import PyPDFLoader
+from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import FAISS
-from langchain_openai import OpenAIEmbeddings, ChatOpenAI
+from langchain_community.embeddings import HuggingFaceEmbeddings
 
-from langgraph.graph import StateGraph, END
+from transformers import pipeline
 
-# --------------------
-# Streamlit UI
-# --------------------
 
-st.set_page_config(page_title="LangGraph RAG", layout="wide")
-st.title("📄 LangGraph RAG Summariser")
+st.set_page_config(
+    page_title="RAG PDF Summarizer",
+    page_icon="📄",
+    layout="wide"
+)
 
-openai_key = st.text_input("Enter OpenAI API Key", type="password")
+st.title("📄 RAG Document Summarizer")
+st.write("Upload a PDF and get summary + answers")
 
-uploaded_file = st.file_uploader("Upload PDF or TXT", type=["pdf", "txt"])
+@st.cache_resource
+def load_model():
+    return pipeline(
+        "summarization",
+        model="sshleifer/distilbart-cnn-12-6"   # or your model
+    )
 
-if uploaded_file and openai_key:
+summarizer = load_model()
 
-    os.environ["OPENAI_API_KEY"] = openai_key
 
+uploaded_file = st.file_uploader(
+    "Drag & Drop PDF here",
+    type="pdf"
+)
+
+if uploaded_file:
+
+    # Save file temporarily
     with tempfile.NamedTemporaryFile(delete=False) as tmp:
         tmp.write(uploaded_file.read())
-        file_path = tmp.name
+        pdf_path = tmp.name
 
-    # Load file
-    if uploaded_file.type == "application/pdf":
-        loader = PyPDFLoader(file_path)
-    else:
-        loader = TextLoader(file_path)
+    st.success("✅ PDF uploaded")
 
+    
+    loader = PyPDFLoader(pdf_path)
     documents = loader.load()
 
-    # Split
+ 
     splitter = RecursiveCharacterTextSplitter(
-        chunk_size=1000,
-        chunk_overlap=200
+        chunk_size=500,
+        chunk_overlap=50
     )
-    chunks = splitter.split_documents(documents)
+    docs = splitter.split_documents(documents)
 
-    # Embeddings (API-based, lightweight)
-    embeddings = OpenAIEmbeddings()
+    embeddings = HuggingFaceEmbeddings(
+        model_name="sentence-transformers/all-MiniLM-L6-v2"
+    )
 
-    vectorstore = FAISS.from_documents(chunks, embeddings)
-    retriever = vectorstore.as_retriever()
+    vectorstore = FAISS.from_documents(docs, embeddings)
+    retriever = vectorstore.as_retriever(search_kwargs={"k": 5})
 
-    llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
-
-    # --------------------
-    # LangGraph State
-    # --------------------
-
-    class GraphState(TypedDict):
-        question: str
-        context: str
-        answer: str
-
-    def retrieve(state: GraphState):
-        docs = retriever.get_relevant_documents(state["question"])
-        context = "\n\n".join([doc.page_content for doc in docs])
-        return {"context": context}
-
-    def generate(state: GraphState):
-        prompt = f"""
-        Summarise the following document context clearly and concisely:
-
-        {state['context']}
-        """
-        response = llm.invoke(prompt)
-        return {"answer": response.content}
-
-    graph = StateGraph(GraphState)
-
-    graph.add_node("retrieve", retrieve)
-    graph.add_node("generate", generate)
-
-    graph.set_entry_point("retrieve")
-    graph.add_edge("retrieve", "generate")
-    graph.add_edge("generate", END)
-
-    app_graph = graph.compile()
+    st.divider()
 
     if st.button("Generate Summary"):
-        result = app_graph.invoke({
-            "question": "Summarise the document."
-        })
 
-        st.subheader("📌 Summary")
-        st.write(result["answer"])
+        with st.spinner("Generating summary..."):
 
-    os.remove(file_path)
+            relevant_docs = retriever.get_relevant_documents(
+                "Summarize this document"
+            )
+
+            context = " ".join(
+                [doc.page_content for doc in relevant_docs]
+            )
+
+            summary = summarizer(
+                context,
+                max_length=200,
+                min_length=60,
+                do_sample=False
+            )
+
+            st.subheader("📌 Summary")
+            st.write(summary[0]["summary_text"])
+
+    st.divider()
+
+    st.subheader("💬 Ask questions from the document")
+
+    user_question = st.text_input("Enter your question")
+
+    if user_question:
+
+        with st.spinner("Searching answer..."):
+
+            relevant_docs = retriever.get_relevant_documents(
+                user_question
+            )
+
+            context = " ".join(
+                [doc.page_content for doc in relevant_docs]
+            )
+
+            answer = summarizer(
+                context,
+                max_length=150,
+                min_length=40,
+                do_sample=False
+            )
+
+            st.success(answer[0]["summary_text"])
