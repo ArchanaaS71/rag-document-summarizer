@@ -6,5 +6,5 @@ langchain-core
 faiss-cpu
 pypdf
 sentence-transformers
-transformers
+transformers>=4.35
 torch
