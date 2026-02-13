@@ -1,7 +1,9 @@
 streamlit
 langchain
-transformers
-sentencepiece
+langchain-community
+langchain-huggingface
 faiss-cpu
+sentence-transformers
+pypdf
+transformers
 torch
-unstructured
