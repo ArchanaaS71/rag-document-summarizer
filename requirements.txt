@@ -1,10 +1,7 @@
 streamlit
 langchain
-langchain-community
-langchain-text-splitters
-langchain-core
+transformers
+sentencepiece
 faiss-cpu
-pypdf
-sentence-transformers
-transformers>=4.35
 torch
+unstructured
