@@ -28,12 +28,13 @@ def load_model():
     )
 
 
-if uploaded_file:
+if uploaded_file is not None:
 
-    # Save file temporarily
     with tempfile.NamedTemporaryFile(delete=False) as tmp:
         tmp.write(uploaded_file.read())
+        tmp.flush()
         pdf_path = tmp.name
+
 
     st.success("✅ PDF uploaded")
 
