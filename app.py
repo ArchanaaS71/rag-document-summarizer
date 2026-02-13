@@ -4,22 +4,16 @@ import os
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import FAISS
-from langchain_openai import OpenAIEmbeddings, ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.runnables import RunnablePassthrough
+from langchain.embeddings import HuggingFaceEmbeddings
+from langchain.llms import HuggingFacePipeline
+from transformers import AutoTokenizer, AutoModelForSeq2SeqLM, pipeline
 
 st.set_page_config(page_title="RAG Document Summarizer", layout="wide")
 st.title("RAG-Based Document Summarizer")
-st.write("Upload a PDF and generate a summary using Retrieval-Augmented Generation.")
-
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-if not OPENAI_API_KEY:
-    OPENAI_API_KEY = st.secrets.get("OPENAI_API_KEY")
-
-if not OPENAI_API_KEY:
-    st.error("OpenAI API Key not found. Please set it in Streamlit secrets.")
-    st.stop()
+st.write("Upload a PDF and generate a summary using open-source models.")
 
 uploaded_file = st.file_uploader("Upload your PDF", type=["pdf"])
 
@@ -36,17 +30,17 @@ if uploaded_file is not None:
 
     @st.cache_resource
     def get_vectorstore(docs):
-        embeddings = OpenAIEmbeddings(model="text-embedding-3-small", openai_api_key=OPENAI_API_KEY)
+        embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
         return FAISS.from_documents(docs, embeddings)
 
-    try:
-        vectorstore = get_vectorstore(docs)
-    except Exception as e:
-        st.error(f"Error creating embeddings: {e}")
-        st.stop()
-
+    vectorstore = get_vectorstore(docs)
     retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
-    llm = ChatOpenAI(model="gpt-4o-mini", temperature=0, openai_api_key=OPENAI_API_KEY)
+
+    model_name = "google/flan-t5-small"
+    tokenizer = AutoTokenizer.from_pretrained(model_name)
+    model = AutoModelForSeq2SeqLM.from_pretrained(model_name)
+    summarizer = pipeline("text2text-generation", model=model, tokenizer=tokenizer)
+    llm = HuggingFacePipeline(pipeline=summarizer)
 
     prompt = ChatPromptTemplate.from_template("""
 You are an expert document summarizer.
