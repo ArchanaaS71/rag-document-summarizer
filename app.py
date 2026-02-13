@@ -13,7 +13,7 @@ from transformers import AutoTokenizer, AutoModelForSeq2SeqLM, pipeline
 
 st.set_page_config(page_title="RAG Document Summarizer", layout="wide")
 st.title("RAG-Based Document Summarizer")
-st.write("Upload a PDF and generate a summary using open-source models.")
+st.write("Upload a PDF to generate a summary using open-source models.")
 
 uploaded_file = st.file_uploader("Upload your PDF", type=["pdf"])
 
@@ -39,8 +39,8 @@ if uploaded_file is not None:
     model_name = "google/flan-t5-small"
     tokenizer = AutoTokenizer.from_pretrained(model_name)
     model = AutoModelForSeq2SeqLM.from_pretrained(model_name)
-    summarizer = pipeline("summarization", model=model, tokenizer=tokenizer)
-    llm = HuggingFacePipeline(pipeline=summarizer)
+    summarizer_pipeline = pipeline(model=model, tokenizer=tokenizer)
+    llm = HuggingFacePipeline(pipeline=summarizer_pipeline)
 
     prompt = ChatPromptTemplate.from_template("""
 You are an expert document summarizer.
