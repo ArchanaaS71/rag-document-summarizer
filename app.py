@@ -7,22 +7,16 @@ from langchain_community.vectorstores import FAISS
 from langchain_community.embeddings import HuggingFaceEmbeddings
 
 from transformers import pipeline
-
-# -----------------------------
-# PAGE CONFIG
-# -----------------------------
 st.set_page_config(
     page_title="RAG PDF Summarizer",
     page_icon="📄",
     layout="wide"
 )
 
-st.title("📄 RAG Document Summarizer")
+st.title("RAG Document Summarizer")
 st.write("Upload a PDF to generate summary and ask questions.")
 
-# -----------------------------
-# LOAD MODEL (cached)
-# -----------------------------
+
 @st.cache_resource
 def load_model():
     return pipeline(
@@ -32,40 +26,32 @@ def load_model():
     )
 
 summarizer = load_model()
-
-# -----------------------------
-# FILE UPLOADER  ✅ (defined BEFORE use)
-# -----------------------------
 uploaded_file = st.file_uploader(
     "Drag & Drop your PDF here",
     type=["pdf"]
 )
-
-# -----------------------------
-# PROCESS FILE
-# -----------------------------
 if uploaded_file is not None:
 
     with st.spinner("Reading PDF..."):
 
-        # Save uploaded file temporarily
+      
         with tempfile.NamedTemporaryFile(delete=False) as tmp:
             tmp.write(uploaded_file.read())
             tmp.flush()
             pdf_path = tmp.name
 
-        # Load PDF
+      
         loader = PyPDFLoader(pdf_path)
         documents = loader.load()
 
-        # Split text
+       
         splitter = RecursiveCharacterTextSplitter(
             chunk_size=500,
             chunk_overlap=50
         )
         docs = splitter.split_documents(documents)
 
-        # Create embeddings
+       
         embeddings = HuggingFaceEmbeddings(
             model_name="sentence-transformers/all-MiniLM-L6-v2"
         )
@@ -73,13 +59,11 @@ if uploaded_file is not None:
         vectorstore = FAISS.from_documents(docs, embeddings)
         retriever = vectorstore.as_retriever(search_kwargs={"k": 5})
 
-    st.success("✅ PDF processed successfully!")
+    st.success("PDF processed successfully!")
 
     st.divider()
 
-    # -----------------------------
-    # GENERATE SUMMARY
-    # -----------------------------
+    
     if st.button("Generate Summary"):
 
         with st.spinner("Generating summary..."):
@@ -99,15 +83,13 @@ if uploaded_file is not None:
                 do_sample=False
             )
 
-            st.subheader("📌 Summary")
+            st.subheader("Summary")
             st.write(summary[0]["summary_text"])
 
     st.divider()
 
-    # -----------------------------
-    # ASK QUESTIONS
-    # -----------------------------
-    st.subheader("💬 Ask questions from the document")
+
+    st.subheader("Ask questions from the document")
 
     user_question = st.text_input("Type your question")
 
@@ -133,4 +115,4 @@ if uploaded_file is not None:
             st.success(answer[0]["summary_text"])
 
 else:
-    st.info("👆 Upload a PDF file to begin.")
+    st.info("Upload a PDF file to begin.")
